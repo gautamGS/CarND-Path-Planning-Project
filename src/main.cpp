@@ -164,6 +164,54 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+struct lanePreChange
+{
+	bool feasible =false;
+
+
+};
+
+vector< bool > laneFesabileCheck (vector<vector<double>> sensor_fusion,int prev_size, double car_s)
+{
+	vector<bool> laneStatus (3) ;
+
+    for ( int j =0 ; j < 3 ;j ++ )
+	{
+		int lane = j; 
+	    //access sensor fusion data to check for car collide
+		for ( int i=0 ; i < sensor_fusion.size(); i++)
+		{
+				//check if car is in my lane
+				double d = 	sensor_fusion[i][6];
+				double my_d = 2 + (4 * lane) ;
+				if ( (d < (my_d + 2))  && (d > (my_d -2) ) )
+				{
+					double vx = sensor_fusion[i][3];
+					double vy = sensor_fusion[i][4];
+					double check_speed = sqrt(vx*vx + vy * vy);
+					double check_car_s = sensor_fusion[i][5];
+
+					//project future s value
+					check_car_s += ((double)prev_size * 0.02 *check_speed);
+
+					//check if our car s is close to other car s
+					if ( check_car_s + 30 > car_s && (check_car_s - car_s < 30 ) )
+					{
+						//slower the speed 
+						laneStatus[lane] =false;
+						break;
+						
+					}
+					else
+					{
+						laneStatus[lane] =true;
+					}
+				}
+		}
+	}	
+	return laneStatus;
+} 
+
 int main() {
   uWS::Hub h;
 
@@ -204,9 +252,7 @@ int main() {
   int lane = 1 ; // here 0 is first lane , 1 is middle lane , 2 is right most lane
 
 	//reference velocity in mph
-  double ref_v = 0.0;
-
-
+  double ref_v = 0.4;
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&ref_v,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -257,7 +303,7 @@ int main() {
 				car_s = end_path_s ;
 
 			//flag for checking if we are colliding
-			bool close = false;
+			bool trylaneChange = false;
 
 			//access sensor fusion data to check for car collide
 			for ( int i=0 ; i < sensor_fusion.size(); i++)
@@ -265,33 +311,45 @@ int main() {
 				//check if car is in my lane
 				double d = 	sensor_fusion[i][6];
 				double my_d = 2 + (4 * lane) ;
-				if ( (d < my_d + 2)  && (d > my_d -2 ) )
+				if ( (d < (my_d + 2))  && (d > (my_d -2) ) )
 				{
 					double vx = sensor_fusion[i][3];
 					double vy = sensor_fusion[i][4];
-					double check_speed = sqrt(vx*vx + vy * vy);
+					double check_speed = sqrt(vx * vx + vy * vy);
 					double check_car_s = sensor_fusion[i][5];
 
 					//project future s value
-					check_car_s += ((double)prev_size * 0.2 *check_speed);
+					check_car_s += ((double)prev_size * 0.02 *check_speed);
 
 					//check if our car s is close to other car s
-					if ( check_car_s > car_s && (check_car_s - car_s )< 30 )
+					if ( check_car_s > car_s && (check_car_s - car_s < 30 ) )
 					{
 						//slower the speed 
-						close =true;
-						if ( lane > 0)
-						{
-							lane =0;
-						}
+						trylaneChange =true;
+						break;
 					}
 				}
 
 			}
+			// int close =0 ;
+			bool KPL = true;
+			bool LLC = false;
+			bool RLC = false;
 
-			if ( close)
+			if (trylaneChange)
 			{
-				ref_v -= .224 ;
+				ref_v -= .224  ;
+				vector<bool> laneStatus = laneFesabileCheck (sensor_fusion,prev_size,car_s);
+				if ( lane - 1 >=0 && laneStatus[lane-1] )
+					{ 
+						LLC = true;
+						KPL = false;
+					}
+				else if ( lane + 1 <=2 && laneStatus[lane +1 ] )
+				{
+					RLC = true;
+					KPL = false;
+				}	
 
 			}
 			else if ( ref_v < 49.5 )
@@ -299,7 +357,15 @@ int main() {
 				ref_v += .224;
 			}
 
+			if ( LLC )
+			{
+				lane-- ;
 
+			}
+			if (RLC)
+			{
+				lane ++;
+			}
 
 			//variables to keep track of reference state x , y, yaw
 			// it can either point to where car is at currently or to previous points 
@@ -315,7 +381,7 @@ int main() {
 
 			// check if previous points are nearly empty then use car points as starting reference
 			//else use previous points as starting  reference
-			if ( prev_size <= 1 )
+			if ( prev_size < 2 )
 			{
 					ptsx.push_back(car_x-cos(car_yaw));
 					ptsx.push_back(car_x);
@@ -362,8 +428,8 @@ int main() {
 				double shift_x = ptsx[i] - ref_x;
 				double shift_y = ptsy[i] - ref_y;
 
-				ptsx[i] = shift_x * cos(-ref_yaw)- shift_y * sin (-ref_yaw);
-				ptsy[i] = shift_x * sin(-ref_yaw) + shift_y * cos (-ref_yaw);
+				ptsx[i] = shift_x * cos(0-ref_yaw)- shift_y * sin (0-ref_yaw);
+				ptsy[i] = shift_x * sin(0-ref_yaw) + shift_y * cos (0-ref_yaw);
 			}
 
 			//create a spline
@@ -389,8 +455,8 @@ int main() {
 			for ( int i =1 ; i <= 50 - previous_path_x.size() ; i++ )
 			{
 				//do convert to meter/s from miles/sec
-				double N = target_d / (0.02 * (ref_v/2.24));
-				double x_point = x_add_on + (target_x /N ) ;
+				double N = target_d / (0.02 * ref_v/2.24);
+				double x_point = x_add_on + target_x / N  ;
 				double y_point = s(x_point);
 
 				x_add_on = x_point;
