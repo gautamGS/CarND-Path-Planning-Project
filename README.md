@@ -1,4 +1,4 @@
-[image1]: ./runWindow.PNG "equation 1"
+[image1]: ./runWindow.png "stats"
 
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
